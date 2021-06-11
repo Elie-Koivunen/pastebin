@@ -68,15 +68,17 @@ p)
 		echo
 		echo
 		
+		rootcafilename=SIQ_rootCA_EXPIRES-`date -v+10y +%d-%B-%Y`
+		
 		# create rootCA
 		cd $mycertpath
 		echo "# Creating root CA .."
-		openssl req -new -newkey rsa:4096 -sha256 -nodes -out SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.csr -keyout SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
-		openssl x509 -days 3650 -trustout -signkey SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.key -req -in SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.csr -out SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.crt
-		openssl x509 -in SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.crt -outform PEM -out SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.pem
+		openssl req -new -newkey rsa:4096 -sha256 -nodes -out $rootcafilename.csr -keyout $rootcafilename.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
+		openssl x509 -days 3650 -trustout -signkey $rootcafilename.key -req -in $rootcafilename.csr -out $rootcafilename.crt
+		openssl x509 -in $rootcafilename.crt -outform PEM -out $rootcafilename.pem
 		echo
 		echo
-		chmod 600 SIQ-rootCA-exp-*
+		chmod 600 SIQ_rootCA_EXPIRES-*
 		echo "# root CA files created accordingly:"
 		pwd
  		ls -lhnG $mycertpath|egrep -v total|awk '{print $1,$3,$4,$9;}'
@@ -96,15 +98,16 @@ c)
 	mycluster=$(echo $myclusters|tr "," "\n")
 	for myclustername in $mycluster
 	do 
+		srvname=SIQ_${myclustername}_EXPIRES-`date -v+10y +%d-%B-%Y`
 		echo "# Generating SSL certificate for cluster: $myclustername"
 		echo "# Generating cluster specific files .."
-		openssl req -new -newkey rsa:4096 -sha256 -nodes -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.csr -keyout SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=$myclustername/O=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
-		openssl x509 -days 3650 -req -in SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.csr -CA SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.crt -CAkey SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.key -set_serial 01 -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.crt
-		openssl x509 -in SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.crt -outform PEM -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.pem
-		openssl verify -CAfile SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.pem SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.pem
+		openssl req -new -newkey rsa:4096 -sha256 -nodes -out $srvname.csr -keyout $srvname.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=$myclustername/O=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
+		openssl x509 -days 3650 -req -in $srvname.csr -CA $rootcafilename.crt -CAkey $rootcafilename.key -set_serial 01 -out $srvname.crt
+		openssl x509 -in $srvname.crt -outform PEM -out $srvname.pem
+		openssl verify -CAfile $rootcafilename.pem $srvname.pem
 		echo
 		echo 
-		chmod 600 SIQ-$myclustername-exp*
+		chmod 600 SIQ_$myclustername_exp*
 		echo "# Files created accordingly:"
 		pwd
  		ls -lhnG $mycertpath|egrep -v total|awk '{print $1,$3,$4,$9;}'
@@ -131,10 +134,10 @@ g)
 	do 
 		echo "# Generating SSL certificate for cluster: $myclustername"
 		echo "# Generating cluster specific files .."
-		openssl req -new -newkey rsa:4096 -sha256 -nodes -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.csr -keyout SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=$myclustername/O=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
-		openssl x509 -days 3650 -req -in SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.csr -CA SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.crt -CAkey SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.key -set_serial 01 -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.crt
-		openssl x509 -in SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.crt -outform PEM -out SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.pem
-		openssl verify -CAfile SIQ-rootCA-exp-`date -v+10y +%d-%B-%Y`.pem SIQ-$myclustername-exp-`date -v+10y +%d-%B-%Y`.pem
+		openssl req -new -newkey rsa:4096 -sha256 -nodes -out $srvname.csr -keyout $srvname.key -subj "/C=FI/ST=`date +"%Z"`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`-`cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 3 | head -n 1`/L=$myclustername/O=SIQ-rootCA/O=PowerScale/CN=Millenial@Support.LoCaL"
+		openssl x509 -days 3650 -req -in $srvname.csr -CA $rootcafilename.crt -CAkey $rootcafilename.key -set_serial 01 -out $srvname.crt
+		openssl x509 -in $srvname.crt -outform PEM -out $srvname.pem
+		openssl verify -CAfile $rootcafilename.pem $srvname.pem
 		echo
 		echo 
 		echo "# Files created accordingly:"
@@ -149,21 +152,21 @@ g)
 ;;
 
 # TBD s)
-# TBD isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ-exp-`date -v+10y +%d-%B-%Y`.pem
-# TBD isi sync certificates peer import --certificate-path=cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`
-# TBD isi sync certificates server import --certificate-path=cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`;;
+# TBD isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ_EXPIRES-`date -v+10y +%d-%B-%Y`.pem
+# TBD isi sync certificates peer import --certificate-path=cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`
+# TBD isi sync certificates server import --certificate-path=cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`;;
 # TBD isi sync settings modify --cluster-certificate-id=`isi sync certificates server list -v|egrep -i "ID:"|awk '{print $2;}'`## v2 lr)
 
 ## v2 # locally install rootca files
 ## v2 echo "Applying the root CA certificate to the local cluster .."
-## v2 isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ-exp-`date -v+10y +%d-%B-%Y`.pem
+## v2 isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ_EXPIRES-`date -v+10y +%d-%B-%Y`.pem
 ## v2 echo done 
 ## v2 ;;
 ## v2 lc)
 ## v2 # locally installing server & peer certificates 
 ## v2 echo "Applying the server & peer certificates .."
-## v2 isi sync certificates peer import --certificate-path=cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`
-## v2 isi sync certificates server import --certificate-path=cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`
+## v2 isi sync certificates peer import --certificate-path=cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`
+## v2 isi sync certificates server import --certificate-path=cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`
 ## v2 isi sync settings modify --cluster-certificate-id=`isi sync certificates server list -v|egrep -i "ID:"|awk '{print $2;}'`
 ## v2 ;;
 ## v2 lu)
@@ -173,14 +176,14 @@ g)
 ## v2 ;;
 ## v2 rr)
 ## v2 echo "Remotely applying the root CA certificate to target cluster.."
-## v2 isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ-exp-`date -v+10y +%d-%B-%Y`.pem
+## v2 isi certificate authority import --name=rootCA-SIQ --certificate-path=rootCA-SIQ_EXPIRES-`date -v+10y +%d-%B-%Y`.pem
 ## v2 echo done 
 ## v2 ;;
 ## v2 rc)
 ## v2 # Install server & peer certificate
 ## v2 echo "Applying the remote server & peer certificates .."
-## v2 isi sync certificates peer import --certificate-path=cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls1-exp-`date -v+10y +%d-%B-%Y`
-## v2 isi sync certificates server import --certificate-path=cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls2-exp-`date -v+10y +%d-%B-%Y`
+## v2 isi sync certificates peer import --certificate-path=cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`.pem  --name=peer-cls-$mycls1_EXPIRES-`date -v+10y +%d-%B-%Y`
+## v2 isi sync certificates server import --certificate-path=cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`.pem --certificate-key-path=cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`.key --name=server-cls-$mycls2_EXPIRES-`date -v+10y +%d-%B-%Y`
 ## v2 isi sync settings modify --cluster-certificate-id=`isi sync certificates server list -v|egrep -i "ID:"|awk '{print $2;}'`
 ## v2 ;;
 ## v2 ru)
