@@ -41,8 +41,7 @@ echo "# -c 		-c (clustername1-replication.acme.com,clustername2-replication.foo.
 echo "# 	Do not use spaces or quotes and the fqdn should point to the system access zone!). This option requires the -p option!"
 echo "# "
 echo "#		example: -c cls01,cls02"
-echo "# -a 		-a Apply the generated certificates"
-echo "# "
+cho "# "
 echo "# -g Generate randomly named cluster specific ssl files signed by the rootca. This option requires the -p option!"
 echo "# "
 echo "# -s Generate scripts to install the certificates .."
@@ -149,6 +148,10 @@ g)
 	echo
 	echo
 	exit 1
+;;
+
+s)
+echo "generating ..."
 ;;
 
 # TBD s)
