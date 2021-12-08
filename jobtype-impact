@@ -1,9 +1,0 @@
-isi job types modify --id=Collect --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=AutoBalance --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=AutoBalanceLin --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=Flexprotect --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=Flexprotectlin --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=smartpools --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=quotascan --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=mediascan --policy=CUSTOM_low_OfficeHours --force
-isi job types modify --id=integrityscan --policy=CUSTOM_low_OfficeHours --force
