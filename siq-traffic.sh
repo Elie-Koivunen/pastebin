@@ -5,40 +5,25 @@ INTERVAL=5
 echo "Starting SyncIQ throughput monitor (Ctrl+C to stop)..."
 echo
 
-# Initial sample
-set -- $(isi statistics query current \
-  --stats node.net.ext.bytes.in,node.net.ext.bytes.out \
-  --format=csv | awk -F',' 'NR>1 {rx+=$2; tx+=$3} END {print rx, tx}')
-
-RX0=$1
-TX0=$2
-
-START_TIME=$(date +%s)
+TOTAL_BPS=0
+SAMPLES=0
 
 while true; do
     sleep $INTERVAL
 
-    set -- $(isi statistics query current \
-      --stats node.net.ext.bytes.in,node.net.ext.bytes.out \
-      --format=csv | awk -F',' 'NR>1 {rx+=$2; tx+=$3} END {print rx, tx}')
+    # Get cluster-wide outbound rate (replication traffic)
+    RATE=$(isi statistics query current \
+        --stats=cluster.net.ext.bytes.out.rate \
+        --format=csv | awk -F',' 'NR>1 {print $2}')
 
-    RX1=$1
-    TX1=$2
+    # Skip empty reads
+    if [ -n "$RATE" ]; then
+        TOTAL_BPS=$(( TOTAL_BPS + RATE ))
+        SAMPLES=$(( SAMPLES + 1 ))
 
-    NOW=$(date +%s)
-
-    TOTAL_BYTES=$(( (RX1 + TX1) - (RX0 + TX0) ))
-    ELAPSED=$(( NOW - START_TIME ))
-
-    # Handle counter reset edge case
-    if [ $TOTAL_BYTES -lt 0 ]; then
-        TOTAL_BYTES=0
-    fi
-
-    if [ "$ELAPSED" -gt 0 ]; then
-        AVG_BPS=$(( TOTAL_BYTES / ELAPSED ))
+        AVG_BPS=$(( TOTAL_BPS / SAMPLES ))
         AVG_GBPS=$(awk "BEGIN {printf \"%.2f\", $AVG_BPS/1000000000}")
-        echo "Elapsed: ${ELAPSED}s | Avg Throughput: ${AVG_GBPS} GB/s"
+
+        echo "Samples: $SAMPLES | Avg Throughput: ${AVG_GBPS} GB/s"
     fi
 done
-``
