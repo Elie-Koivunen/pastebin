@@ -469,7 +469,7 @@ remove_nodes() {
         echo "${node_info} ${node_model}" >> "${removable_file}"
         log INFO "Node LNN ${node} - Serial: $(echo ${node_info} | awk '{print $2}') - Model: ${node_model}"
 
-        node_count=$(expr ${node_count} + 1)
+        node_count=$(expr ${node_count} + 1 | tr -d ' ')
     done < "${temp_nodes_file}"
 
     rm -f "${temp_nodes_file}"
@@ -543,7 +543,7 @@ remove_nodes() {
             log INFO "Job ID: ${job_id} Duration: ${duration}"
         fi
 
-        removed_count=$(expr ${removed_count} + 1)
+        removed_count=$(expr ${removed_count} + 1 | tr -d ' ')
         log INFO "Removed: ${removed_count}/${node_count}"
 
         # Grace period between node removals
@@ -602,7 +602,7 @@ add_nodes() {
         serial=$(echo "${serial}" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
         [ -z "${serial}" ] && continue
 
-        total_count=$(expr ${total_count} + 1)
+        total_count=$(expr ${total_count} + 1 | tr -d ' ')
 
         if ! validate_serial "${serial}"; then
             echo "${serial}" >> "${not_found_file}"
@@ -617,7 +617,7 @@ add_nodes() {
             continue
         fi
 
-        valid_count=$(expr ${valid_count} + 1)
+        valid_count=$(expr ${valid_count} + 1 | tr -d ' ')
     done < "${serials_file}"
 
     if [ -f "${not_found_file}" ]; then
@@ -788,7 +788,7 @@ add_nodes() {
             fi
         fi
 
-        added_count=$(expr ${added_count} + 1)
+        added_count=$(expr ${added_count} + 1 | tr -d ' ')
         log INFO "Added: ${added_count}/${valid_count}"
 
         # Grace period between node additions
@@ -877,7 +877,7 @@ carve_nodes() {
             return 1
         fi
 
-        node_count=$(expr ${node_count} + 1)
+        node_count=$(expr ${node_count} + 1 | tr -d ' ')
     done < "${temp_nodes_file}"
 
     rm -f "${temp_nodes_file}"
@@ -1066,7 +1066,7 @@ remove_nodepool() {
         echo "${node_info} ${node_model}" >> "${removable_file}"
         log INFO "Node LNN ${node} - Serial: $(echo ${node_info} | awk '{print $2}') - Model: ${node_model}"
 
-        node_count=$(expr ${node_count} + 1)
+        node_count=$(expr ${node_count} + 1 | tr -d ' ')
     done < "${temp_nodes_file}"
 
     rm -f "${temp_nodes_file}"
@@ -1159,7 +1159,7 @@ remove_nodepool() {
 
             log INFO "Nodes ${lnn} and ${next_lnn} have appeared in node list"
 
-            removed_count=$(expr ${removed_count} + 2)
+            removed_count=$(expr ${removed_count} + 2 | tr -d ' ')
             log INFO "Removed: ${removed_count}/${node_count}"
 
             # Skip the next node since we already processed it
@@ -1195,7 +1195,7 @@ remove_nodepool() {
                 log INFO "Job ID: ${job_id} Duration: ${duration}"
             fi
 
-            removed_count=$(expr ${removed_count} + 1)
+            removed_count=$(expr ${removed_count} + 1 | tr -d ' ')
             log INFO "Removed: ${removed_count}/${node_count}"
 
             # Grace period
