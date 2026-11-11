@@ -10,13 +10,17 @@
 # - Nodepool removal
 #
 # Author: Elie Koivunen (Elie.Koivunen@dell.com)
-# Version: 1.2.6
+# Version: 1.2.7
 # License: MIT
 #
 # Future enhancements
 #   - add mechanism to check node state after joining a cluster
 #
 # CHANGELOG:
+#   1.2.7 - Added --healthcheck switch for --nodes-add operation
+#           Runs battery test and readonly mode checks after each node joins
+#           Checks occur before proceeding to add the next node
+#           Requires user intervention if checks fail (unless --force is used)
 #   1.2.6 - Added --verbose switch to enable debug output for troubleshooting
 #           DEBUG messages only display when --verbose is enabled
 #   1.2.5 - Added --force switch to skip user confirmation prompts
@@ -67,7 +71,7 @@ set -e          # Exit on error
 # Configuration and Metadata
 ################################################################################
 
-SCRIPT_VERSION="1.2.6"
+SCRIPT_VERSION="1.2.7"
 SCRIPT_DATE="2026-11-09"
 SCRIPT_AUTHOR="Elie Koivunen"
 SCRIPT_EMAIL="Elie.Koivunen@dell.com"
@@ -105,6 +109,7 @@ REMOVE_NODEPOOL=""
 CARVE_NODEPOOL_NAME=""
 FORCE=false
 VERBOSE=false
+HEALTHCHECK=false
 
 ################################################################################
 # Logging Functions
@@ -206,6 +211,8 @@ Operations:
 Options:
   --force                              Skip user confirmation prompts
   --verbose                            Enable verbose/debug output
+  --healthcheck                        Run additional health checks after node addition
+                                      (battery test and readonly mode check)
   --sleep-short=SECONDS                Short sleep duration (default: 300)
   --sleep-long=SECONDS                 Long sleep duration (default: 900)
   --help                               Display this help menu
@@ -651,6 +658,62 @@ add_nodes() {
         # Get node details
         node_details=$(isi_nodes %{id} %{lnn} %{name} %{serialno} 2>/dev/null | grep -i "${serial}" || echo "")
         log INFO "Node details: ${node_details}"
+
+        # Additional health checks if --healthcheck is enabled
+        if [ "${HEALTHCHECK}" = true ]; then
+            log INFO "Running additional health checks..."
+
+            # Get LNN of the added node
+            node_lnn=$(isi_nodes %{serialno} %{lnn} 2>/dev/null | egrep -i "${serial}" | awk '{print $2}')
+            log INFO "Node LNN: ${node_lnn}"
+
+            # Check 1: Battery state
+            log INFO "Checking battery state..."
+            check_id=$(isi healthcheck run battery_test_status -v 2>/dev/null | awk '{print $5}')
+            log INFO "Assessing: ${check_id}"
+            sleep 603
+            battery_result=$(isi healthcheck view "${check_id}" 2>/dev/null | egrep "Result:" | awk '{print $2}')
+            log INFO "Battery test result: ${battery_result}"
+
+            if [ "${battery_result}" != "Pass" ]; then
+                log ERROR "Battery test failed: ${battery_result}"
+                log ERROR "User intervention required before proceeding to next node"
+                if [ "${FORCE}" = false ]; then
+                    read -p "Battery test failed. Continue anyway? (y/n): " user_ack
+                    if [ "${user_ack}" != "y" ]; then
+                        log INFO "User cancelled operation due to battery test failure"
+                        return 1
+                    fi
+                else
+                    log ERROR "Battery test failed - stopping operation"
+                    return 1
+                fi
+            else
+                log INFO "Battery test passed"
+
+                # Check 2: Readonly mode
+                log INFO "Checking readonly mode..."
+                readonly_mode=$(isi readonly view --node-lnn=${node_lnn} 2>/dev/null | egrep "Mode:" | awk '{print $2}')
+                log INFO "Readonly mode: ${readonly_mode}"
+
+                if [ "${readonly_mode}" = "Yes" ]; then
+                    log ERROR "Node is in readonly mode"
+                    log ERROR "User intervention required before proceeding to next node"
+                    if [ "${FORCE}" = false ]; then
+                        read -p "Node in readonly mode. Continue anyway? (y/n): " user_ack
+                        if [ "${user_ack}" != "y" ]; then
+                            log INFO "User cancelled operation due to readonly mode"
+                            return 1
+                        fi
+                    else
+                        log ERROR "Node in readonly mode - stopping operation"
+                        return 1
+                    fi
+                else
+                    log INFO "Node is not in readonly mode"
+                fi
+            fi
+        fi
 
         added_count=$(expr ${added_count} + 1)
         log INFO "Added: ${added_count}/${valid_count}"
@@ -1152,6 +1215,10 @@ main() {
 
             --verbose)
                 VERBOSE=true
+                ;;
+
+            --healthcheck)
+                HEALTHCHECK=true
                 ;;
 
             --nodepool-list)
