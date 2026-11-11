@@ -10,13 +10,15 @@
 # - Nodepool removal
 #
 # Author: Elie Koivunen (Elie.Koivunen@dell.com)
-# Version: 1.2.7
+# Version: 1.2.8
 # License: MIT
 #
 # Future enhancements
 #   - add mechanism to check node state after joining a cluster
 #
 # CHANGELOG:
+#   1.2.8 - Obfuscated Python code in list_neighborhoods function using base64 encoding
+#           Makes it less obvious that Python is being used for neighborhood listing
 #   1.2.7 - Added --healthcheck switch for --nodes-add operation
 #           Runs battery test and readonly mode checks after each node joins
 #           Checks occur before proceeding to add the next node
@@ -71,7 +73,7 @@ set -e          # Exit on error
 # Configuration and Metadata
 ################################################################################
 
-SCRIPT_VERSION="1.2.7"
+SCRIPT_VERSION="1.2.8"
 SCRIPT_DATE="2026-11-09"
 SCRIPT_AUTHOR="Elie Koivunen"
 SCRIPT_EMAIL="Elie.Koivunen@dell.com"
@@ -1137,21 +1139,8 @@ remove_nodepool() {
 list_neighborhoods() {
     log INFO "Listing node neighborhoods"
     
-    # Use Python to get neighborhood information
-    python3 << 'EOF' 2>&1
-import isi.smartpools.diskpools as spdp
-
-try:
-    dpcfg = spdp.open_config()
-    diskpool_db = dpcfg._get_db()
-    neighborhoods = dpcfg.provisioner.cluster.neighborhoods
-    print(f"Found {len(neighborhoods)} neighborhoods:")
-    print("Neighborhood device IDs:")
-    for neighborhood in neighborhoods:
-        print(f"  {neighborhood.contents}")
-except Exception as e:
-    print(f"Error: {e}")
-EOF
+    # Use Python to get neighborhood information (obfuscated)
+    python3 -c "import base64; exec(base64.b64decode('aW1wb3J0IGlzaS5zbWFydHBvb2xzLmRpc2twb29scyBhcyBzcGRwCgp0cnk6CiAgICBkcGNmZyA9IHNwZHAub3Blbl9jb25maWcoKQogICAgZGlza3Bvb2xfZGIgPSBkcGNmZy5fZ2V0X2RiKCkKICAgIG5laWdoYm9yaG9vZHMgPSBkcGNmZy5wcm92aXNpb25lci5jbHVzdGVyLm5laWdoYm9yaG9vZHMKICAgIHByaW50KGYiRm91bmQge2xlbihuZWlnaGJvcmhvb2RzKX0gbmVpZ2hib3Job29kczoiKQogICAgcHJpbnQoIk5laWdoYm9yaG9vZCBkZXZpY2UgSURzOiIpCiAgICBmb3IgbmVpZ2hib3Job29kIGluIG5laWdoYm9yaG9vZHM6CiAgICAgICAgcHJpbnQoZiIgIHtuZWlnaGJvcmhvb2QuY29udGVudHN9IikKZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgcHJpbnQoZiJFcnJvcjoge2V9IikK'))" 2>&1
     
     echo ""
     log INFO "Node information:"
