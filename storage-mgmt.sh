@@ -121,6 +121,11 @@ HEALTHCHECK=false
 init_logging() {
     LOG_DIR="${1:-${DEFAULT_LOG_DIR}}"
 
+    # Debug: Show what LOG_DIR is set to
+    if [ "${VERBOSE}" = true ]; then
+        echo "DEBUG: LOG_DIR set to: ${LOG_DIR}" >&2
+    fi
+
     # Create log directory if it doesn't exist
     if [ ! -d "${LOG_DIR}" ]; then
         mkdir -p "${LOG_DIR}" || {
@@ -206,7 +211,7 @@ Operations:
   --nodes-remove=LNN1,LNN2,...         Remove nodes with specified LNNs
   --nodes-add=FILE                     Add nodes with serials from file
   --nodepool-carve=LNN1,LNN2,...       Carve nodes into separate nodepool
-  --nodepool-name=NAME                Custom name for carved nodepool (alphanumeric and dash, max 34 chars)
+  --nodepool-name=POOLNAME            Custom name for carved nodepool (alphanumeric and dash, max 34 chars)
   --nodepool-remove=POOLNAME          Remove all nodes from specified nodepool
   --nodepool-list                     Display node neighborhoods
 
@@ -327,17 +332,29 @@ validate_nodepool_name() {
 
     # Nodepool names must be alphanumeric with hyphens, max 34 characters
     if [ -z "${name}" ]; then
-        log ERROR "Nodepool name cannot be empty"
+        if [ -n "${LOG_FILE}" ]; then
+            log ERROR "Nodepool name cannot be empty"
+        else
+            echo "ERROR: Nodepool name cannot be empty" >&2
+        fi
         return 1
     fi
 
     if [ ${#name} -gt 34 ]; then
-        log ERROR "Nodepool name exceeds 34 characters: ${name}"
+        if [ -n "${LOG_FILE}" ]; then
+            log ERROR "Nodepool name exceeds 34 characters: ${name}"
+        else
+            echo "ERROR: Nodepool name exceeds 34 characters: ${name}" >&2
+        fi
         return 1
     fi
 
     if ! echo "${name}" | grep -qE '^[A-Za-z0-9-]+$'; then
-        log ERROR "Invalid nodepool name format: ${name} (alphanumeric and hyphens only)"
+        if [ -n "${LOG_FILE}" ]; then
+            log ERROR "Invalid nodepool name format: ${name} (alphanumeric and hyphens only)"
+        else
+            echo "ERROR: Invalid nodepool name format: ${name} (alphanumeric and hyphens only)" >&2
+        fi
         return 1
     fi
 
@@ -384,6 +401,10 @@ preflight_check() {
 remove_nodes() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    # Ensure LOG_DIR is set (use default if not)
+    LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
+    
     logfile="${LOG_DIR}/log-nodes-removed_${timestamp}.txt"
     removable_file="${LOG_DIR}/mgmt-nodes-removable_${timestamp}.txt"
 
@@ -517,6 +538,10 @@ remove_nodes() {
 add_nodes() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    # Ensure LOG_DIR is set (use default if not)
+    LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
+    
     logfile="${LOG_DIR}/log-nodes-join_${timestamp}.txt"
     serials_file=$(echo "${input}" | sed 's/--nodes-add=//')
 
@@ -737,6 +762,10 @@ add_nodes() {
 carve_nodes() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    # Ensure LOG_DIR is set (use default if not)
+    LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
+    
     logfile="${LOG_DIR}/log-nodes-carved_${timestamp}.txt"
     carvable_file="${LOG_DIR}/mgmt-nodes-carvable_${timestamp}.txt"
 
@@ -927,6 +956,10 @@ carve_nodes() {
 remove_nodepool() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
+    
+    # Ensure LOG_DIR is set (use default if not)
+    LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
+    
     logfile="${LOG_DIR}/log-nodepool-removed_${timestamp}.txt"
     removable_file="${LOG_DIR}/mgmt-nodepool-removable_${timestamp}.txt"
 
@@ -1195,7 +1228,6 @@ main() {
 
             --nodepool-name=*)
                 CARVE_NODEPOOL_NAME="${1#*=}"
-                log INFO "Custom nodepool name: ${CARVE_NODEPOOL_NAME}"
                 ;;
 
             --force)
