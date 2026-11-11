@@ -80,13 +80,13 @@ SCRIPT_EMAIL="Elie.Koivunen@dell.com"
 SCRIPT_LICENSE="MIT"
 
 # Default configuration
-DEFAULT_SLEEP_SHORT=300      # 5 minutes
-DEFAULT_SLEEP_LONG=900       # 15 minutes
-DEFAULT_WAIT_CHECK=900       # 15 minutes (v0.70 wait time)
-DEFAULT_MIN_POOL_NODES=3     # Minimum nodes to remain in pool
-DEFAULT_MIN_CARVE_NODES=3    # Minimum nodes to carve
-DEFAULT_LOCK_FILE="/tmp/storage-mgmt.lock"
-DEFAULT_LOG_DIR="./logs_storage-mgmt"
+DEFAULT_SLEEP_SHORT=300      # 5 minutes - grace period between node operations
+DEFAULT_SLEEP_LONG=900       # 15 minutes - wait time for nodes in WORKING state
+DEFAULT_WAIT_CHECK=900       # 15 minutes - wait time for node to appear in cluster (v0.70 procedure)
+DEFAULT_MIN_POOL_NODES=3     # Minimum nodes that must remain in source pool after carving
+DEFAULT_MIN_CARVE_NODES=3    # Minimum nodes required to carve into a new pool
+DEFAULT_LOCK_FILE="/tmp/storage-mgmt.lock"  # Lock file to prevent concurrent script execution
+DEFAULT_LOG_DIR="./logs_storage-mgmt"  # Directory for all log files and temporary files
 
 # Colors for output
 RED='\033[0;31m'
@@ -99,25 +99,33 @@ NC='\033[0m' # No Color
 # Global Variables
 ################################################################################
 
+# Script execution path - used for relative file operations
 SCRIPT_PATH=$(cd "$(dirname "$0")" && pwd)
+
+# Log file path - set by init_logging() when script starts
 LOG_FILE=""
+
+# Lock file path - prevents multiple instances from running simultaneously
 LOCK_FILE="${DEFAULT_LOCK_FILE}"
 
-# Runtime variables
-REMOVE_NODES_LNN=""
-ADD_NODES_SERIALS=""
-CARVE_NODES_LNN=""
-REMOVE_NODEPOOL=""
-CARVE_NODEPOOL_NAME=""
-FORCE=false
-VERBOSE=false
-HEALTHCHECK=false
+# Runtime variables for command-line arguments
+REMOVE_NODES_LNN=""          # Stores LNNs for --nodes-remove operation
+ADD_NODES_SERIALS=""        # Stores file path for --nodes-add operation
+CARVE_NODES_LNN=""          # Stores LNNs for --nodepool-carve operation
+REMOVE_NODEPOOL=""           # Stores pool name for --nodepool-remove operation
+CARVE_NODEPOOL_NAME=""       # Stores custom name for carved nodepool (--nodepool-name)
+FORCE=false                  # When true, skips user confirmation prompts
+VERBOSE=false                # When true, displays DEBUG messages to console
+HEALTHCHECK=false            # When true, runs battery and readonly checks after node addition
 
 ################################################################################
 # Logging Functions
 ################################################################################
 
 # Initialize logging
+# Purpose: Creates log directory and initializes log file with timestamp and metadata
+# Why: Centralized logging ensures all operations are tracked for audit and troubleshooting
+# Timestamp prevents overwriting logs from previous script runs
 init_logging() {
     LOG_DIR="${1:-${DEFAULT_LOG_DIR}}"
 
@@ -146,6 +154,9 @@ init_logging() {
 }
 
 # Log message with level
+# Purpose: Centralized logging that outputs to both console (with colors) and log file
+# Why: Provides consistent formatting and color coding for different message types
+# DEBUG messages only display to console when VERBOSE is enabled to reduce noise
 log() {
     level="$1"
     shift
@@ -401,10 +412,10 @@ preflight_check() {
 remove_nodes() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
-    
+
     # Ensure LOG_DIR is set (use default if not)
     LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
-    
+
     logfile="${LOG_DIR}/log-nodes-removed_${timestamp}.txt"
     removable_file="${LOG_DIR}/mgmt-nodes-removable_${timestamp}.txt"
 
@@ -413,23 +424,26 @@ remove_nodes() {
     # Clean up previous files
     rm -f "${logfile}" "${removable_file}"
 
-    # Parse input
+    # Parse input - extract LNNs from --nodes-remove=X,Y,Z format
     nodes_input=$(echo "${input}" | sed 's/--nodes-remove=//')
     log INFO "Input nodes: ${nodes_input}"
-    
-    # Validate input format
+
+    # Validate input format - must be comma-separated numbers
     if ! echo "${nodes_input}" | grep -qE '^[0-9,]+$'; then
         log ERROR "Invalid input format. Expected comma-separated LNNs."
         return 1
     fi
-    
+
     # Validate each LNN and collect node information
     node_count=0
 
     # Use a temporary file to track valid nodes
+    # Why: Allows processing comma-separated input line by line
     temp_nodes_file=$(mktemp)
     echo "${nodes_input}" | tr ',' '\n' > "${temp_nodes_file}"
 
+    # Loop through each LNN to validate and collect information
+    # Why: Ensures all nodes exist in cluster before proceeding with removal
     while IFS= read -r node; do
         node=$(echo "${node}" | tr -d ' ')
         [ -z "${node}" ] && continue
@@ -440,14 +454,16 @@ remove_nodes() {
 
         log INFO "Processing node LNN: ${node}"
 
-        # Get node information
+        # Get node information (LNN and serial number)
+        # Why: Serial number is needed to track node after smartfail
         node_info=$(isi_nodes %{lnn} %{serialno} 2>/dev/null | grep -w "^${node}" || echo "")
         if [ -z "${node_info}" ]; then
             log ERROR "Node LNN ${node} not found in cluster"
             continue
         fi
 
-        # Get node model
+        # Get node model for identification
+        # Why: Helps verify correct nodes are being removed
         node_model=$(isi_for_array -n${node} "isi_hw_status | egrep 'Product:'" 2>/dev/null | awk '{print $3}' || echo "unknown")
 
         echo "${node_info} ${node_model}" >> "${removable_file}"
@@ -462,11 +478,12 @@ remove_nodes() {
         log ERROR "No valid nodes to remove"
         return 1
     fi
-    
+
     log INFO "Total nodes to remove: ${node_count}"
     cat "${removable_file}" | tee -a "${logfile}"
 
     # User confirmation (skip if --force is set)
+    # Why: Prevents accidental node removal which is destructive operation
     if [ "${FORCE}" = false ]; then
         echo ""
         read -p "Do you want to proceed with removing ${node_count} nodes? (y/n): " user_ack
@@ -484,7 +501,8 @@ remove_nodes() {
     sleep_long="${SLEEP_LONG:-${DEFAULT_SLEEP_LONG}}"
     sleep_short="${SLEEP_SHORT:-${DEFAULT_SLEEP_SHORT}}"
 
-    # Process each node
+    # Process each node for removal
+    # Why: Sequential removal ensures proper cluster rebalancing between operations
     while IFS= read -r line; do
         lnn=$(echo "${line}" | awk '{print $1}')
         serial=$(echo "${line}" | awk '{print $2}')
@@ -492,6 +510,7 @@ remove_nodes() {
         log INFO "Smartfailing node LNN: ${lnn} Serial: ${serial}"
 
         # Execute smartfail
+        # Why: Smartfail gracefully removes node from cluster by migrating data
         if ! log_exec isi devices node smartfail --node-lnn=${lnn} --force; then
             log ERROR "Failed to smartfail node ${lnn}"
             continue
@@ -499,10 +518,15 @@ remove_nodes() {
 
         # Check if the smartfailing has completed
         # Wait for node to appear in isi devices node list (v0.70 procedure)
+        # Why: After smartfail, node reappears in device list but in different state
+        # This indicates the smartfail operation has completed successfully
         # If not present, wait for 900 seconds and check again
         log INFO "Waiting for node ${lnn} to appear in node list..."
         wait_check="${DEFAULT_WAIT_CHECK:-900}"
 
+        # Wait loop - checks every 900 seconds for node to appear
+        # Why: Smartfail can take a long time (hours) depending on data volume
+        # No timeout - waits indefinitely per v0.70 procedure
         while ! isi devices node list --no-header --no-footer | grep -q "${serial}"; do
             mydatecheck=$(date)
             log INFO "Timestamp status-check: ${mydatecheck}"
@@ -511,7 +535,8 @@ remove_nodes() {
 
         log INFO "Node ${lnn} has appeared in node list"
 
-        # Get job report
+        # Get job report for FlexProtect job
+        # Why: Shows how long the smartfail operation took
         job_id=$(isi job reports list 2>/dev/null | grep -i "FlexProtect" | grep -i "Succeeded" | tail -1 | awk '{print $2}' || echo "")
         if [ -n "${job_id}" ]; then
             duration=$(isi job reports view "${job_id}" 2>/dev/null | grep -i "elapsed" | head -1 | awk '{print $5}' | sed 's/[()]//g' || echo "unknown")
@@ -521,7 +546,8 @@ remove_nodes() {
         removed_count=$(expr ${removed_count} + 1)
         log INFO "Removed: ${removed_count}/${node_count}"
 
-        # Grace period
+        # Grace period between node removals
+        # Why: Allows cluster to rebalance and stabilize before next removal
         log INFO "Waiting ${sleep_short}s grace period..."
         sleep "${sleep_short}"
 
@@ -538,27 +564,28 @@ remove_nodes() {
 add_nodes() {
     input="$1"
     timestamp=$(date +%Y%m%d_%H%M%S)
-    
+
     # Ensure LOG_DIR is set (use default if not)
     LOG_DIR="${LOG_DIR:-${DEFAULT_LOG_DIR}}"
-    
+
     logfile="${LOG_DIR}/log-nodes-join_${timestamp}.txt"
     serials_file=$(echo "${input}" | sed 's/--nodes-add=//')
 
     log INFO "Starting node addition process"
-    
+
     # Clean up previous log
     rm -f "${logfile}"
-    
+
     # Validate file exists
     if [ ! -f "${serials_file}" ]; then
         log ERROR "Serials file not found: ${serials_file}"
         return 1
     fi
-    
+
     log INFO "Reading serials from: ${serials_file}"
-    
+
     # Get list of joinable nodes
+    # Why: Only nodes that appear in isi devices node list can be added
     log INFO "Checking for joinable nodes..."
     isi devices node list --no-header --no-footer | awk '{print $1}' > "${LOG_DIR}/mgmt-joinable-nodes_${timestamp}.txt"
 
@@ -569,6 +596,8 @@ add_nodes() {
     valid_count=0
     total_count=0
 
+    # Loop through each serial in the file to validate
+    # Why: Ensures all serials are valid and available before starting addition
     while IFS= read -r serial; do
         serial=$(echo "${serial}" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
         [ -z "${serial}" ] && continue
@@ -580,6 +609,8 @@ add_nodes() {
             continue
         fi
 
+        # Check if serial is in joinable nodes list
+        # Why: Serial must be discoverable by the cluster to be added
         if ! grep -q "${serial}" "${LOG_DIR}/mgmt-joinable-nodes_${timestamp}.txt"; then
             log WARN "Serial ${serial} not found in joinable nodes"
             echo "${serial}" >> "${not_found_file}"
@@ -606,6 +637,7 @@ add_nodes() {
     log INFO "Valid serials to add: ${valid_count}/${total_count}"
 
     # Display the serials to be added with details
+    # Why: Shows user exactly which nodes will be added before confirmation
     echo ""
     echo "Serials to be added:"
     while IFS= read -r serial; do
@@ -621,6 +653,7 @@ add_nodes() {
     echo ""
 
     # User confirmation (skip if --force is set)
+    # Why: Prevents accidental node addition
     if [ "${FORCE}" = false ]; then
         read -p "Do you want to proceed with adding ${valid_count} nodes? (y/n): " user_ack
         if [ "${user_ack}" != "y" ]; then
@@ -638,6 +671,7 @@ add_nodes() {
     sleep_short="${SLEEP_SHORT:-${DEFAULT_SLEEP_SHORT}}"
 
     # Check for nodes in error/working state
+    # Why: Cannot add nodes while cluster is in unstable state
     log INFO "Checking for nodes in ERROR or WORKING state..."
     join_state_output=$(isi devices node list --verbose --no-header --no-footer 2>/dev/null)
 
@@ -652,17 +686,20 @@ add_nodes() {
     fi
 
     # Wait for a five minute grace period prior to proceeding to join a node (v0.70 procedure)
+    # Why: Allows cluster to stabilize before adding new nodes
     log INFO "Waiting for 5 minutes grace period prior to proceeding to join a node..."
     sleep "${sleep_short}"
 
-    # Add each node
+    # Add each node sequentially
+    # Why: Sequential addition allows proper cluster rebalancing between nodes
     while IFS= read -r serial; do
         serial=$(echo "${serial}" | tr -d ' ' | tr '[:lower:]' '[:upper:]')
         [ -z "${serial}" ] && continue
 
         log INFO "Adding node with serial: ${serial}"
 
-        # Add node
+        # Add node to cluster
+        # Why: isi devices node add initiates the join process
         if ! log_exec isi devices node add --serial-number="${serial}" --force; then
             log ERROR "Failed to add node ${serial}"
             continue
@@ -670,6 +707,7 @@ add_nodes() {
 
         # Check and verify that the node has been successfully added to the cluster
         # Wait for node to appear in isi_nodes output (v0.70 procedure)
+        # Why: Node must appear in isi_nodes before it's fully joined
         # If not present, wait for 900 seconds and check again
         log INFO "Waiting for node ${serial} to appear in cluster..."
         wait_check="${DEFAULT_WAIT_CHECK:-900}"
@@ -683,18 +721,23 @@ add_nodes() {
         log INFO "Node ${serial} has joined the cluster"
 
         # Get node details
+        # Why: Confirms node was assigned correct LNN and ID
         node_details=$(isi_nodes %{id} %{lnn} %{name} %{serialno} 2>/dev/null | grep -i "${serial}" || echo "")
         log INFO "Node details: ${node_details}"
 
         # Additional health checks if --healthcheck is enabled
+        # Why: Ensures node is healthy before proceeding to add next node
         if [ "${HEALTHCHECK}" = true ]; then
             log INFO "Running additional health checks..."
 
             # Get LNN of the added node
+            # Why: LNN is needed for readonly mode check
             node_lnn=$(isi_nodes %{serialno} %{lnn} 2>/dev/null | egrep -i "${serial}" | awk '{print $2}')
             log INFO "Node LNN: ${node_lnn}"
 
             # Check 1: Battery state
+            # Why: Battery health is critical for node reliability and data integrity
+            # Sleep 603 seconds to allow battery test to complete
             log INFO "Checking battery state..."
             check_id=$(isi healthcheck run battery_test_status -v 2>/dev/null | awk '{print $5}')
             log INFO "Assessing: ${check_id}"
@@ -705,6 +748,7 @@ add_nodes() {
             if [ "${battery_result}" != "Pass" ]; then
                 log ERROR "Battery test failed: ${battery_result}"
                 log ERROR "User intervention required before proceeding to next node"
+                # Allow user to override if not in force mode
                 if [ "${FORCE}" = false ]; then
                     read -p "Battery test failed. Continue anyway? (y/n): " user_ack
                     if [ "${user_ack}" != "y" ]; then
@@ -719,6 +763,7 @@ add_nodes() {
                 log INFO "Battery test passed"
 
                 # Check 2: Readonly mode
+                # Why: Node in readonly mode cannot accept writes, which is problematic for production
                 log INFO "Checking readonly mode..."
                 readonly_mode=$(isi readonly view --node-lnn=${node_lnn} 2>/dev/null | egrep "Mode:" | awk '{print $2}')
                 log INFO "Readonly mode: ${readonly_mode}"
@@ -726,6 +771,7 @@ add_nodes() {
                 if [ "${readonly_mode}" = "Yes" ]; then
                     log ERROR "Node is in readonly mode"
                     log ERROR "User intervention required before proceeding to next node"
+                    # Allow user to override if not in force mode
                     if [ "${FORCE}" = false ]; then
                         read -p "Node in readonly mode. Continue anyway? (y/n): " user_ack
                         if [ "${user_ack}" != "y" ]; then
@@ -745,7 +791,8 @@ add_nodes() {
         added_count=$(expr ${added_count} + 1)
         log INFO "Added: ${added_count}/${valid_count}"
 
-        # Grace period
+        # Grace period between node additions
+        # Why: Allows cluster to rebalance and stabilize before adding next node
         log INFO "Waiting ${sleep_short}s grace period..."
         sleep "${sleep_short}"
 
