@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+Inventory Script for PowerScale OneFS
+Counts files and directories in a directory tree with multithreaded scanning.
+"""
+
+__version__ = "1.1.0"
+
 import argparse
 import os
 import signal
@@ -112,6 +119,7 @@ def write_report_to_file(counter, start_time, end_time, duration, path, output_f
         f.write("="*60 + "\n")
         f.write("INVENTORY REPORT\n")
         f.write("="*60 + "\n")
+        f.write(f"Version: {__version__}\n")
         f.write(f"Path: {path}\n")
         f.write(f"Total Directories: {counts['dirs']:,}\n")
         f.write(f"Total Files: {counts['files']:,}\n")
@@ -149,7 +157,13 @@ def interval_reporter(counter, start_time, path, interval_seconds, output_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Inventory folders and files in a directory tree.')
+    global shutdown_requested, interrupted
+    
+    parser = argparse.ArgumentParser(
+        description='Inventory folders and files in a directory tree.',
+        epilog=f'Version: {__version__}'
+    )
+    parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     parser.add_argument('--path', required=True, help='Path to scan')
     parser.add_argument('--threads', type=int, default=8, help='Number of threads to use (default: 8)')
     parser.add_argument('--interval', type=int, default=30, help='Interval in seconds for progress reports (default: 30)')
@@ -235,6 +249,7 @@ def main():
     else:
         print("INVENTORY RESULTS")
     print("="*60)
+    print(f"Version: {__version__}")
     print(f"Path: {args.path}")
     print(f"Total Directories: {counts['dirs']:,}")
     print(f"Total Files: {counts['files']:,}")
