@@ -219,7 +219,6 @@ def main():
             future.result()
     
     # Stop interval reporter
-    global shutdown_requested
     shutdown_requested = True
     reporter_thread.join(timeout=2)
     
