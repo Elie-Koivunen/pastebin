@@ -4,20 +4,22 @@ import os
 import signal
 import sys
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
 
 # Global flag for graceful shutdown
 shutdown_requested = False
+interrupted = False
 
 
 def signal_handler(signum, frame):
     """Handle Ctrl-C signal for graceful shutdown."""
-    global shutdown_requested
+    global shutdown_requested, interrupted
     shutdown_requested = True
-    print("\n\nInterrupt received. Shutting down gracefully...")
-    sys.exit(130)  # Standard exit code for SIGINT
+    interrupted = True
+    print("\n\nInterrupt received. Finishing current operations...")
 
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -38,6 +40,14 @@ class InventoryCounter:
     def add_dirs(self, count):
         with self.lock:
             self.total_dirs += count
+    
+    def get_counts(self):
+        with self.lock:
+            return {
+                'files': self.total_files,
+                'dirs': self.total_dirs,
+                'size': self.total_size
+            }
 
 
 def scan_directory(dir_path, counter):
@@ -94,10 +104,56 @@ def collect_directories(base_path, counter):
     return directories
 
 
+def write_report_to_file(counter, start_time, end_time, duration, path, output_file):
+    """Write inventory report to file."""
+    counts = counter.get_counts()
+    
+    with open(output_file, 'w') as f:
+        f.write("="*60 + "\n")
+        f.write("INVENTORY REPORT\n")
+        f.write("="*60 + "\n")
+        f.write(f"Path: {path}\n")
+        f.write(f"Total Directories: {counts['dirs']:,}\n")
+        f.write(f"Total Files: {counts['files']:,}\n")
+        f.write(f"Total Size: {counts['size']:,} bytes ({counts['size'] / (1024*1024):.2f} MB)\n")
+        f.write("="*60 + "\n")
+        f.write(f"Start time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}\n")
+        f.write(f"End time: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}\n")
+        f.write(f"Duration: {duration:.2f} seconds\n")
+        f.write("="*60 + "\n")
+
+
+def interval_reporter(counter, start_time, path, interval_seconds, output_file):
+    """Thread function to print interval reports."""
+    global shutdown_requested
+    
+    while not shutdown_requested:
+        time.sleep(interval_seconds)
+        
+        if shutdown_requested:
+            break
+        
+        counts = counter.get_counts()
+        elapsed = time.time() - start_time
+        
+        print("\n" + "="*60)
+        print(f"INTERVAL REPORT (elapsed: {elapsed:.1f}s)")
+        print("="*60)
+        print(f"Total Directories: {counts['dirs']:,}")
+        print(f"Total Files: {counts['files']:,}")
+        print(f"Total Size: {counts['size']:,} bytes ({counts['size'] / (1024*1024):.2f} MB)")
+        print("="*60 + "\n")
+        
+        # Also write to file
+        write_report_to_file(counter, start_time, time.time(), elapsed, path, output_file)
+
+
 def main():
     parser = argparse.ArgumentParser(description='Inventory folders and files in a directory tree.')
     parser.add_argument('--path', required=True, help='Path to scan')
     parser.add_argument('--threads', type=int, default=8, help='Number of threads to use (default: 8)')
+    parser.add_argument('--interval', type=int, default=30, help='Interval in seconds for progress reports (default: 30)')
+    parser.add_argument('--output', help='Output file path (default: inventory_<timestamp>.txt in script directory)')
     
     args = parser.parse_args()
     
@@ -109,15 +165,33 @@ def main():
         print(f"Error: Path '{args.path}' is not a directory")
         return 1
     
+    # Generate output filename if not provided
+    if args.output:
+        output_file = args.output
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        output_file = os.path.join(script_dir, f"inventory_{timestamp}.txt")
+    
     # Start timer
     start_time = time.time()
     start_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(start_time))
     print(f"Start time: {start_time_str}")
+    print(f"Output file: {output_file}")
     
     counter = InventoryCounter()
     
     print(f"Scanning {args.path} with {args.threads} threads...")
+    print(f"Progress reports every {args.interval} seconds...")
     print("Collecting directories...")
+    
+    # Start interval reporter thread
+    reporter_thread = threading.Thread(
+        target=interval_reporter,
+        args=(counter, start_time, args.path, args.interval, output_file),
+        daemon=True
+    )
+    reporter_thread.start()
     
     # Collect all directories recursively
     directories = collect_directories(args.path, counter)
@@ -142,25 +216,42 @@ def main():
             completed += 1
             if completed % 100 == 0 or completed == len(directories):
                 print(f"Scanned {completed}/{len(directories)} directories")
+            future.result()
+    
+    # Stop interval reporter
+    global shutdown_requested
+    shutdown_requested = True
+    reporter_thread.join(timeout=2)
     
     # Print results
     end_time = time.time()
     end_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(end_time))
     duration = end_time - start_time
     
-    print("\n" + "="*50)
-    print("INVENTORY RESULTS")
-    print("="*50)
+    counts = counter.get_counts()
+    
+    print("\n" + "="*60)
+    if interrupted:
+        print("INVENTORY RESULTS (INTERRUPTED)")
+    else:
+        print("INVENTORY RESULTS")
+    print("="*60)
     print(f"Path: {args.path}")
-    print(f"Total Directories: {counter.total_dirs:,}")
-    print(f"Total Files: {counter.total_files:,}")
-    print(f"Total Size: {counter.total_size:,} bytes ({counter.total_size / (1024*1024):.2f} MB)")
-    print("="*50)
+    print(f"Total Directories: {counts['dirs']:,}")
+    print(f"Total Files: {counts['files']:,}")
+    print(f"Total Size: {counts['size']:,} bytes ({counts['size'] / (1024*1024):.2f} MB)")
+    print("="*60)
     print(f"Start time: {start_time_str}")
     print(f"End time: {end_time_str}")
     print(f"Duration: {duration:.2f} seconds")
-    print("="*50)
+    print("="*60)
+    print(f"Report saved to: {output_file}")
     
+    # Write final report to file
+    write_report_to_file(counter, start_time, end_time, duration, args.path, output_file)
+    
+    if interrupted:
+        return 130
     return 0
 
 
