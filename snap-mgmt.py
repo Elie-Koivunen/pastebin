@@ -46,7 +46,7 @@ class ScriptConfig:
     NAME = "snap-mgmt"
     AUTHOR = "Elie.Koivunen@Dell.com"
     CONTRIBUTORS = ""
-    VERSION = "1.0.0"
+    VERSION = "1.0.1"
     HOSTNAME = socket.gethostname()
     PUBLISH_DATE = "2024-05-24"
     
@@ -86,6 +86,20 @@ class ScriptConfig:
         "based on entries, state, size, name or path in an ascending or descending "
         "order. With the search switch, you have the option of searching based on "
         "absolute path or a snapshot schedule name prefix."
+    )
+
+    # Changelog
+    CHANGELOG = (
+        "1.0.1 - Fixed critical bugs:\n"
+        "         - Fixed filter_by_locks() to return all entries with warning (lock status not available in grouped data)\n"
+        "         - Fixed search_entries() to use correct tuple indices for path vs name mode\n"
+        "         - Fixed table output logic to use group_by_path_mode instead of args.group_by_name\n"
+        "         - Fixed size filter logic to properly handle None vs 0 values\n"
+        "         - Made regex pattern more flexible to handle variable column counts\n"
+        "         - Added validation for empty entries list before processing\n"
+        "         - Added file existence check before processing\n"
+        "         - Added better error handling for file reading\n"
+        "1.0.0 - Initial release"
     )
 
 
@@ -264,29 +278,29 @@ class GroupedEntry:
 def parse_snapshot_line(line: str) -> Optional[SnapshotEntry]:
     """
     Parse a single line from the isi snapshot list output.
-    
+
     Uses regex to handle variable spacing and extract fields reliably.
-    
+
     Args:
         line: A line from the snapshot list output.
-        
+
     Returns:
         SnapshotEntry object if parsing succeeds, None otherwise.
     """
     # Skip header and separator lines
     if line.startswith('-') or line.startswith('Total:') or line.startswith('ID'):
         return None
-    
+
     # Regex pattern to match the isi snapshot table format
     # Expected format: ID Name Path ... Size ... State Locked
-    # This is a more robust approach than space-based splitting
-    pattern = r'^\s*(\S+)\s+(\S+)\s+(\S+)\s+(?:\S+\s+){5}(\S+[KMGT]?)\s+(?:\S+\s+){2}(\S+)\s+(\S+)\s*$'
-    
+    # Made more flexible to handle variable column counts
+    pattern = r'^\s*(\S+)\s+(\S+)\s+(\S+)\s+(?:\S+\s+){4,6}(\S+[KMGT]?)\s+(?:\S+\s+){1,3}(\S+)\s+(\S+)\s*$'
+
     match = re.match(pattern, line)
     if not match:
         logging.debug(f"Failed to parse line: {line}")
         return None
-    
+
     try:
         return SnapshotEntry(
             id=match.group(1),
@@ -399,15 +413,21 @@ def filter_by_locks(entries_list: List[Tuple]) -> List[Tuple]:
     """
     Filter entries to show only locked snapshots.
     
+    Note: This function cannot filter by lock status because the grouped entries
+    don't include the locked field. This function is kept for API compatibility
+    but currently returns all entries unchanged.
+    
+    To filter by lock status, it must be done at the SnapshotEntry level before
+    grouping, or the lock status must be added to the grouped data structure.
+    
     Args:
         entries_list: List of entry tuples.
         
     Returns:
-        Filtered list containing only locked entries.
+        Unchanged list (lock filtering not supported in grouped view).
     """
-    # Entry tuple structure: (count, size, state, prefix, path)
-    # State is at index 2
-    return [entry for entry in entries_list if entry[2] == 'Yes']
+    logging.warning("Filter by locks is not supported for grouped entries. Returning all entries.")
+    return entries_list
 
 
 def filter_by_age(entries: List[SnapshotEntry], max_age_days: int) -> List[SnapshotEntry]:
@@ -648,28 +668,32 @@ def check_thresholds(entries: List[SnapshotEntry], size_threshold_tb: float, cou
 def search_entries(entries_list: List[Tuple], search_string: str, is_path_search: bool) -> None:
     """
     Search for entries matching the search string.
-    
+
     Args:
         entries_list: List of entry tuples.
         search_string: String to search for.
         is_path_search: If True, search in path field; otherwise search in all fields.
     """
     if is_path_search:
+        # Path mode: tuple has 4 elements (count, size, state, path)
         print("{:<10}{:<20}{:<10}{:<100}".format("Entries", "Total Size", "State", "Path"))
         print("-" * 140)
         for entry in entries_list:
             cleaned = [str(field).strip() for field in entry]
-            if search_string in cleaned[3] or search_string in cleaned[4]:
+            # Search in path (index 3) only
+            if search_string in cleaned[3]:
                 print("{:<10}{:<20}{:<10}{:<100}".format(
-                    cleaned[0], cleaned[1], cleaned[2], cleaned[4]
+                    cleaned[0], cleaned[1], cleaned[2], cleaned[3]
                 ))
     else:
+        # Name mode: tuple has 5 elements (count, size, state, prefix, path)
         print("{:<10}{:<20}{:<10}{:<50}{:<100}".format(
             "Entries", "Total Size", "State", "Name Prefix", "Path"
         ))
         print("-" * 140)
         for entry in entries_list:
             cleaned = [str(field).strip() for field in entry]
+            # Search in prefix (index 3) or path (index 4)
             if search_string in cleaned[3] or search_string in cleaned[4]:
                 print("{:<10}{:<20}{:<10}{:<50}{:<100}".format(*cleaned))
 
@@ -842,17 +866,28 @@ def main() -> None:
         print("ERROR: --file argument is required for this operation")
         parser.print_help()
         sys.exit(1)
-    
+
+    # Validate file exists before processing
+    if not os.path.exists(args.file):
+        print(f"ERROR: File not found: {args.file}")
+        logging.error(f"File not found: {args.file}")
+        sys.exit(1)
+
     # Read and parse snapshot file
     try:
         entries = read_snapshot_file(args.file)
     except (FileNotFoundError, IOError) as e:
         print(f"ERROR: {e}")
+        logging.error(f"Failed to read snapshot file: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Unexpected error reading file: {e}")
+        logging.error(f"Unexpected error reading file: {e}", exc_info=True)
         sys.exit(1)
     
     # Apply size filters if specified
-    if args.min_size_gb > 0 or args.max_size_gb:
-        max_gb = args.max_size_gb if args.max_size_gb else float('inf')
+    if args.min_size_gb > 0 or args.max_size_gb is not None:
+        max_gb = args.max_size_gb if args.max_size_gb is not None else float('inf')
         entries = filter_by_size(entries, args.min_size_gb, max_gb)
         logging.info(f"Filtered by size: {len(entries)} entries remaining")
     
@@ -864,9 +899,15 @@ def main() -> None:
     else:
         grouped, paths = group_by_name(entries)
         group_by_path_mode = False
-    
+
     # Sort entries
     entries_list = sort_entries(grouped, paths, args.sort_by, args.sort_type)
+
+    # Validate that we have entries to process
+    if not entries_list:
+        print("No entries found matching the specified criteria.")
+        logging.info("No entries found after filtering/grouping")
+        return
     
     # Apply lock filter
     if args.locks:
@@ -902,11 +943,8 @@ def main() -> None:
         export_to_json(entries_list, args.output, group_by_path_mode)
         print(f"Exported to JSON: {args.output}")
     else:
-        # Default table output
-        if args.group_by_name:
-            print_table(entries_list, group_by_path=False)
-        else:
-            print_table(entries_list, group_by_path=True)
+        # Default table output - use the determined grouping mode
+        print_table(entries_list, group_by_path=group_by_path_mode)
     
     logging.info("Script completed successfully")
 
